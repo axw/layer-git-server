@@ -1,0 +1,12 @@
+#!/bin/sh
+
+set -e
+
+commit=$1
+shift
+
+for r in $(relation-ids git); do
+    relation-set -r $r git-commit=$commit
+    echo "Updating relation $r"
+done
+

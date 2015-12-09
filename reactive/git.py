@@ -1,8 +1,9 @@
 import os
-import yaml
 import subprocess
+import textwrap
 
 from charmhelpers.core.hookenv import (
+    local_unit,
     remote_service_name,
     status_set,
     open_port,
@@ -59,10 +60,40 @@ def create_repo(git):
     host.mkdir(repo_path, group=service, perms=0o770)
     subprocess.check_call(['git', 'init', '--bare', '--shared=group', repo_path])
 
+    # Create server-side hook that will inform
+    # clients whenever changes are committed.
+    create_git_hooks(repo_path, service)
+
+    # Make the repo owned by 'service'.
+    chown_repo(repo_path, service)
+
     ssh_host_key = open(SSH_HOST_RSA_KEY).read()
     git.configure(repo_path, ssh_host_key)
     set_state('git.repo.created')
     status_set('active', '')
+
+
+def create_git_hooks(repo, owner):
+    # TODO(axw) we should reject pushes to branches
+    # other than master in pre-receive. Or allow but
+    # ignore in post-receive?
+    hook = os.path.join(repo, 'hooks', 'post-receive')
+    content = textwrap.dedent("""\
+    #!/bin/sh
+    set -e
+    while read oldrev newrev ref
+    do
+        if test "$ref"="ref/heads/master"; then
+            juju-run {} "scripts/set-commit $newrev"
+        fi
+    done
+    """.format(local_unit()))
+    host.write_file(hook, content, owner, owner, 0o700)
+
+
+def chown_dir(repo, owner):
+    # TODO(axw) use Python things
+    subprocess.check_call(['chown', '-R', owner, repo_path])
 
 
 def repo_root():
