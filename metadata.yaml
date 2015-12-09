@@ -9,6 +9,6 @@ tags:
 provides:
   git:
     interface: git
-storage:
-  repo-root:
-    type: filesystem
+#storage:
+#  repo-root:
+#    type: filesystem

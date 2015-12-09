@@ -11,66 +11,66 @@ from charmhelpers.core.hookenv import (
     storage_get,
 )
 
-from charmhelpers.core.templating import render
-from charmhelpers.core.host import (
-    adduser,
-    service_restart,
-    service_running,
-    service_start,
-)
+from charmhelpers.core import host
 
 from charmhelpers.fetch import (
     apt_install,
-    install_remote,
 )
 
 from charms.reactive import (
     hook,
     when,
     when_not,
-    is_state,
     set_state,
     remove_state,
 )
 
 
-@when('git.available')
-@when_not('git.username.available')
-def wait_username():
-    status_set('waiting', 'Waiting for client username')
+SSH_HOST_RSA_KEY = '/etc/ssh/ssh_host_rsa_key.pub'
+
+
+@hook('install')
+def install_git():
+    apt_install('git')
 
 
 @when('git.available')
-@when_not('git.public-key.available')
-def wait_public_key():
-    status_set('waiting', 'Waiting for client public key')
+@when_not('git.client.ready')
+def wait_username(git):
+    status_set('waiting', 'Waiting for client to be ready')
 
 
-@when('git.username.available', 'git.public-key-available')
+@when('git.client.ready')
 @when_not('git.repo.created')
 def create_repo(git):
-    repo_path = create_repo(repo_name,
-                            git.get_remote('username'),
-                            git.get_remote('public-key'))
-    git.configure(repo_path)
-    set_state('git.repo.created')
-
-
-def create_repo(repo_name, username, public_key):
+    username = git.get_remote('username')
     service = remote_service_name()
     repo_path = os.path.join(repo_root(), service+'.git')
     host.add_group(service)
-    host.adduser(service, password=password, shell='/usr/bin/git-shell')
+    # TODO(axw) generate long, random password
+    host.adduser(service, password='hunter2', shell='/usr/bin/git-shell')
     host.add_user_to_group(service, service)
-    # TODO(axw) write public key to ~user/.ssh/authorized_keys
+
+    ssh_public_key = git.get_remote('ssh-public-key')
+    dotssh_dir = '/home/{}/.ssh/'.format(service)
+    host.mkdir(dotssh_dir, service, service, 0o700)
+    host.write_file(dotssh_dir + 'authorized_keys', ssh_public_key, service, service, 0o400)
+
     host.mkdir(repo_path, group=service, perms=0o770)
-    subprocess.check_call([
-        'git', 'init', '--bare', '--shared=group', repo_path,
-    ])
-    return repo_path
+    subprocess.check_call(['git', 'init', '--bare', '--shared=group', repo_path])
+
+    ssh_host_key = open(SSH_HOST_RSA_KEY).read()
+    git.configure(repo_path, ssh_host_key)
+    set_state('git.repo.created')
+    status_set('active', '')
 
 
 def repo_root():
-    return storage_get('location', storage_list('repo-root')[0])
-
+    # TODO(axw) when reactive support for storage is fixed, use
+    # storage.
+    # return storage_get('location', storage_list('repo-root')[0])
+    path = os.path.abspath('repo-root')
+    if not os.path.exists(path):
+        os.makedirs(path)
+    return path
 
