@@ -6,13 +6,13 @@ from charmhelpers.core.hookenv import (
     local_unit,
     remote_service_name,
     status_set,
-    open_port,
-    config,
     storage_list,
     storage_get,
 )
 
-from charmhelpers.core import host
+from charmhelpers.core import (
+    host,
+)
 
 from charmhelpers.fetch import (
     apt_install,
@@ -23,7 +23,6 @@ from charms.reactive import (
     when,
     when_not,
     set_state,
-    remove_state,
 )
 
 
@@ -33,6 +32,7 @@ SSH_HOST_RSA_KEY = '/etc/ssh/ssh_host_rsa_key.pub'
 @hook('install')
 def install_git():
     apt_install('git')
+    configure_sshd()
 
 
 @when('git.available')
@@ -47,25 +47,30 @@ def create_repo(git):
     username = git.get_remote('username')
     service = remote_service_name()
     repo_path = os.path.join(repo_root(), service+'.git')
-    host.add_group(service)
-    # TODO(axw) generate long, random password
-    host.adduser(service, password='hunter2', shell='/usr/bin/git-shell')
-    host.add_user_to_group(service, service)
+
+    host.add_group(username)
+    host.adduser(username, password=host.pwgen(32), shell='/usr/bin/git-shell')
 
     ssh_public_key = git.get_remote('ssh-public-key')
-    dotssh_dir = '/home/{}/.ssh/'.format(service)
-    host.mkdir(dotssh_dir, service, service, 0o700)
-    host.write_file(dotssh_dir + 'authorized_keys', ssh_public_key, service, service, 0o400)
+    dotssh_dir = '/home/{}/.ssh/'.format(username)
+    host.mkdir(dotssh_dir, username, username, 0o700)
+    host.write_file(dotssh_dir + 'authorized_keys', ssh_public_key, username, username, 0o400)
 
-    host.mkdir(repo_path, group=service, perms=0o770)
+    # Symlink ~ubuntu/.ssh/authorized_keys as ~<username>/.ssh/admin_authorized_keys
+    admin_authorized_keys = '/home/ubuntu/.ssh/authorized_keys'
+    admin_authorized_keys_symlink = dotssh_dir + 'admin_authorized_keys'
+    os.chmod(admin_authorized_keys, os.stat(admin_authorized_keys).st_mode|stat.S_IROTH)
+    host.symlink(admin_authorized_keys, admin_authorized_keys_symlink)
+
+    host.mkdir(repo_path, group=username, perms=0o770)
     subprocess.check_call(['git', 'init', '--bare', '--shared=group', repo_path])
 
     # Create server-side hook that will inform
     # clients whenever changes are committed.
-    create_git_hooks(repo_path, service)
+    create_git_hooks(repo_path, username)
 
-    # Make the repo owned by 'service'.
-    chown_repo(repo_path, service)
+    # Make the repo owned by <username<.
+    chown_repo(repo_path, username)
 
     ssh_host_key = open(SSH_HOST_RSA_KEY).read()
     git.configure(repo_path, ssh_host_key)
@@ -74,9 +79,15 @@ def create_repo(git):
 
 
 def create_git_hooks(repo, owner):
-    # TODO(axw) we should reject pushes to branches
-    # other than master in pre-receive. Or allow but
-    # ignore in post-receive?
+    """
+    create_git_hooks creates server-side hooks for the git repository.
+
+    Currently, we create only a post-receive hook which will run the
+    "scripts/set-commit" script in the hook context of the unit. The
+    script will set the "git-commit" relation setting for each connected
+    client unit.
+    """
+
     hook = os.path.join(repo, 'hooks', 'post-receive')
     content = textwrap.dedent("""\
     #!/bin/sh
@@ -91,8 +102,19 @@ def create_git_hooks(repo, owner):
     host.write_file(hook, content, owner, owner, 0o700)
 
 
+def configure_sshd():
+    """
+    configure_sshd will ensure that sshd looks in .ssh/admin_authorized_keys
+    as well as the usual .ssh/authorized_keys.
+    """
+    sshd_config = '/etc/ssh/sshd_config'
+    line = 'AuthorizedKeysFile %h/.ssh/authorized_keys %h/.ssh/admin_authorized_keys'
+    with open(sshd_config, 'a') as f:
+        f.writelines(line)
+
+
 def chown_dir(repo, owner):
-    # TODO(axw) use Python things
+    # TODO(axw) use os.walk?
     subprocess.check_call(['chown', '-R', owner, repo_path])
 
 
