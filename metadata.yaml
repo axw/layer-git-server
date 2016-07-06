@@ -7,6 +7,7 @@ tags:
   - application_development
   - storage
 series:
+  - xenial
   - trusty
 provides:
   git:

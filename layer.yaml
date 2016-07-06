@@ -1,1 +1,2 @@
 includes: ['layer:basic', 'interface:git']
+repo: https://github.com/axw/layer-git-server.git

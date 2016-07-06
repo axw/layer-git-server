@@ -71,8 +71,9 @@ def create_repo(git):
     # Make the repo owned by <username>.
     chown_repo(repo_path, username)
 
-    ssh_host_key = open(SSH_HOST_RSA_KEY).read()
-    git.configure(repo_path, ssh_host_key)
+    # TODO(axw) read and publish all host keys.
+    ssh_host_keys = [open(SSH_HOST_RSA_KEY).read()]
+    git.configure(repo_path, ssh_host_keys)
     set_state('git.repo.created')
     status_set('active', '')
 
@@ -106,6 +107,9 @@ def configure_sshd():
     configure_sshd will ensure that sshd looks in .ssh/admin_authorized_keys
     as well as the usual .ssh/authorized_keys.
     """
+
+    # TODO(axw) flock sshd_config
+    # TODO(axw) just use a Match directive with Group=<remote-service>
 
     authorized_keys_command = os.path.abspath(AUTHORIZED_KEYS_COMMAND)
     os.chown(authorized_keys_command, 0, 0) # chown to root:root
